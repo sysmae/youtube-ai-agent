@@ -1,21 +1,29 @@
+import { api } from '@/convex/_generated/api'
 import { getConvexClient } from '@/lib/convex'
-import { ChatRequestBody, SSE_DATA_PREFIX, SSE_LINE_DELIMITER, StreamMessage, StreamMessageType } from '@/lib/types'
+import { submitQuestion } from '@/lib/langgraph'
+import {
+  ChatRequestBody,
+  SSE_DATA_PREFIX,
+  SSE_LINE_DELIMITER,
+  StreamMessage,
+  StreamMessageType,
+} from '@/lib/types'
 import { auth } from '@clerk/nextjs/server'
+import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
 import { NextResponse } from 'next/server'
 
-
-export const runtime = "edge";
+export const runtime = 'edge'
 
 function sendSSEMessage(
   writer: WritableStreamDefaultWriter<Uint8Array>,
   data: StreamMessage
 ) {
-  const encoder = new TextEncoder();
+  const encoder = new TextEncoder()
   return writer.write(
     encoder.encode(
       `${SSE_DATA_PREFIX}${JSON.stringify(data)}${SSE_LINE_DELIMITER}`
     )
-  );
+  )
 }
 
 export async function POST(req: Request) {
@@ -48,15 +56,80 @@ export async function POST(req: Request) {
 
     ;(async () => {
       try {
-        // 여기에 스트림 처리 로직 추가
+        // 이벤트 스트림을 사용하여 클라이언트에게 메시지를 보냅니다.
+        await sendSSEMessage(writer, { type: StreamMessageType.Connected })
 
-        const sendSSEMessage(writer, {type: StreamMessageType.Connected})
+        // convex에 유저 메시지 전송
+        await convex.mutation(api.messages.send, {
+          chatId,
+          content: newMessage,
+        })
+
+        // 메시지를 랭체인 포맷으로 변환
+        const langChainMessages = [
+          ...messages.map((msg) =>
+            msg.role === 'user'
+              ? new HumanMessage(msg.content)
+              : new AIMessage(msg.content)
+          ),
+          new HumanMessage(newMessage),
+        ]
+
+        try {
+          /// 이벤트 스트림 제작
+          const eventStream = await submitQuestion(langChainMessages, chatId)
+
+          // Process the events
+          for await (const event of eventStream) {
+            if (event.event === 'on_chat_model_stream') {
+              // 새로운 채팅 메시지를 생성
+              const token = event.data.chunk
+              if (token) {
+                // Access the text property from the AIMessageChunk
+                const text = token.content.at(0)?.['text']
+                if (text) {
+                  await sendSSEMessage(writer, {
+                    type: StreamMessageType.Token,
+                    token: text,
+                  })
+                }
+              }
+            } else if (event.event === 'on_tool_start') {
+              // 툴 스타트
+              await sendSSEMessage(writer, {
+                type: StreamMessageType.ToolStart,
+                tool: event.name || 'unknown',
+                input: event.data.input,
+              })
+            } else if (event.event === 'on_tool_end') {
+              const toolMessage = new ToolMessage(event.data.output)
+
+              await sendSSEMessage(writer, {
+                type: StreamMessageType.ToolEnd,
+                tool: toolMessage.lc_kwargs.name || 'unknown',
+                output: event.data.output,
+              })
+            }
+          }
+
+          // Send completion message without storing the response
+          await sendSSEMessage(writer, { type: StreamMessageType.Done })
+        } catch (streamError) {
+          console.error('Error in event stream:', streamError)
+          await sendSSEMessage(writer, {
+            type: StreamMessageType.Error,
+            error:
+              streamError instanceof Error
+                ? streamError.message
+                : 'Stream processing failed',
+          })
+        }
       } catch (error) {
         console.error('Error in stream:', error)
-        // await sendSSEMessage(writer, {
-        //   type: StreamMessageType.Error,
-        //   error: error instanceof Error ? error.message : 'Unknown error',
-        // })
+        await sendSSEMessage(writer, {
+          type: StreamMessageType.Error,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
       } finally {
         try {
           await writer.close()
