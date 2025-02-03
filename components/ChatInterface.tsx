@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Doc, Id } from '@/convex/_generated/dataModel'
 import { Button } from '@/components/ui/button'
 import { ChatRequestBody, StreamMessageType } from '@/lib/types'
-// import WelcomeMessage from '@/components/WelcomeMessage'
-// import { createSSEParser } from '@/lib/SSEParser'
-// import { MessageBubble } from '@/components/MessageBubble'
+import WelcomeMessage from '@/components/WelcomeMessage'
+import { MessageBubble } from '@/components/MessageBubble'
 import { ArrowRight } from 'lucide-react'
 import { getConvexClient } from '@/lib/convex'
 import { api } from '@/convex/_generated/api'
+import { createSSEParser } from '@/lib/SSEParser'
 
 interface ChatInterfaceProps {
   chatId: Id<'chats'>
@@ -131,94 +131,94 @@ export default function ChatInterface({
       if (!response.body) throw new Error('No response body available')
 
       // Create SSE parser and stream reader
-      // const parser = createSSEParser()
+      const parser = createSSEParser()
       const reader = response.body.getReader()
 
       // Process the stream chunks
 
-      // await processStream(reader, async (chunk) => {
-      //   // Parse SSE messages from the chunk
-      //   // const messages = parser.parse(chunk)
+      await processStream(reader, async (chunk) => {
+        // Parse SSE messages from the chunk
+        const messages = parser.parse(chunk)
 
-      //   // Handle each message based on its type
-      //   for (const message of messages) {
-      //     switch (message.type) {
-      //       case StreamMessageType.Token:
-      //         // Handle streaming tokens (normal text response)
-      //         if ('token' in message) {
-      //           fullResponse += message.token
-      //           setStreamedResponse(fullResponse)
-      //         }
-      //         break
+        // Handle each message based on its type
+        for (const message of messages) {
+          switch (message.type) {
+            case StreamMessageType.Token:
+              // Handle streaming tokens (normal text response)
+              if ('token' in message) {
+                fullResponse += message.token
+                setStreamedResponse(fullResponse)
+              }
+              break
 
-      //       case StreamMessageType.ToolStart:
-      //         // Handle start of tool execution (e.g. API calls, file operations)
-      //         if ('tool' in message) {
-      //           setCurrentTool({
-      //             name: message.tool,
-      //             input: message.input,
-      //           })
-      //           fullResponse += formatTerminalOutput(
-      //             message.tool,
-      //             message.input,
-      //             'Processing...'
-      //           )
-      //           setStreamedResponse(fullResponse)
-      //         }
-      //         break
+            case StreamMessageType.ToolStart:
+              // Handle start of tool execution (e.g. API calls, file operations)
+              if ('tool' in message) {
+                setCurrentTool({
+                  name: message.tool,
+                  input: message.input,
+                })
+                fullResponse += formatTerminalOutput(
+                  message.tool,
+                  message.input,
+                  'Processing...'
+                )
+                setStreamedResponse(fullResponse)
+              }
+              break
 
-      //       case StreamMessageType.ToolEnd:
-      //         // Handle completion of tool execution
-      //         if ('tool' in message && currentTool) {
-      //           // Replace the "Processing..." message with actual output
-      //           const lastTerminalIndex = fullResponse.lastIndexOf(
-      //             '<div class="bg-[#1e1e1e]'
-      //           )
-      //           if (lastTerminalIndex !== -1) {
-      //             fullResponse =
-      //               fullResponse.substring(0, lastTerminalIndex) +
-      //               formatTerminalOutput(
-      //                 message.tool,
-      //                 currentTool.input,
-      //                 message.output
-      //               )
-      //             setStreamedResponse(fullResponse)
-      //           }
-      //           setCurrentTool(null)
-      //         }
-      //         break
+            case StreamMessageType.ToolEnd:
+              // Handle completion of tool execution
+              if ('tool' in message && currentTool) {
+                // Replace the "Processing..." message with actual output
+                const lastTerminalIndex = fullResponse.lastIndexOf(
+                  '<div class="bg-[#1e1e1e]'
+                )
+                if (lastTerminalIndex !== -1) {
+                  fullResponse =
+                    fullResponse.substring(0, lastTerminalIndex) +
+                    formatTerminalOutput(
+                      message.tool,
+                      currentTool.input,
+                      message.output
+                    )
+                  setStreamedResponse(fullResponse)
+                }
+                setCurrentTool(null)
+              }
+              break
 
-      //       case StreamMessageType.Error:
-      //         // Handle error messages from the stream
-      //         if ('error' in message) {
-      //           throw new Error(message.error)
-      //         }
-      //         break
+            case StreamMessageType.Error:
+              // Handle error messages from the stream
+              if ('error' in message) {
+                throw new Error(message.error)
+              }
+              break
 
-      //       case StreamMessageType.Done:
-      //         // Handle completion of the entire response
-      //         const assistantMessage: Doc<'messages'> = {
-      //           _id: `temp_assistant_${Date.now()}`,
-      //           chatId,
-      //           content: fullResponse,
-      //           role: 'assistant',
-      //           createdAt: Date.now(),
-      //         } as Doc<'messages'>
+            case StreamMessageType.Done:
+              // Handle completion of the entire response
+              const assistantMessage: Doc<'messages'> = {
+                _id: `temp_assistant_${Date.now()}`,
+                chatId,
+                content: fullResponse,
+                role: 'assistant',
+                createdAt: Date.now(),
+              } as Doc<'messages'>
 
-      //         // Save the complete message to the database
-      //         const convex = getConvexClient()
-      //         await convex.mutation(api.messages.store, {
-      //           chatId,
-      //           content: fullResponse,
-      //           role: 'assistant',
-      //         })
+              // Save the complete message to the database
+              const convex = getConvexClient()
+              await convex.mutation(api.messages.store, {
+                chatId,
+                content: fullResponse,
+                role: 'assistant',
+              })
 
-      //         setMessages((prev) => [...prev, assistantMessage])
-      //         setStreamedResponse('')
-      //         return
-      //     }
-      //   }
-      // })
+              setMessages((prev) => [...prev, assistantMessage])
+              setStreamedResponse('')
+              return
+          }
+        }
+      })
     } catch (error) {
       // Handle any errors during streaming
       console.error('Error sending message:', error)
@@ -243,17 +243,17 @@ export default function ChatInterface({
       {/* Messages container */}
       <section className="flex-1 overflow-y-auto bg-gray-50 p-2 md:p-0">
         <div className="max-w-4xl mx-auto p-4 space-y-3">
-          {/* {messages?.length === 0 && <WelcomeMessage />} */}
+          {messages?.length === 0 && <WelcomeMessage />}
 
-          {/* {messages?.map((message: Doc<'messages'>) => (
+          {messages?.map((message: Doc<'messages'>) => (
             <MessageBubble
               key={message._id}
               content={message.content}
               isUser={message.role === 'user'}
             />
-          ))} */}
+          ))}
 
-          {/* {streamedResponse && <MessageBubble content={streamedResponse} />} */}
+          {streamedResponse && <MessageBubble content={streamedResponse} />}
 
           {/* Loading indicator */}
           {isLoading && !streamedResponse && (
